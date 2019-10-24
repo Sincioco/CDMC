@@ -1,7 +1,8 @@
-﻿// ====================================================================================================
+﻿
+// ====================================================================================================
 //                                      Excel File Reader - Proof of Concept
 // ====================================================================================================
-// Programmed By:  Louiery R. Sincioco                                          Version:  .02 (Phase 2)
+// Programmed By:  Louiery R. Sincioco                                          Version:  .03 (Phase 3)
 // Programed Date:  October 24, 2019                                                      
 // ----------------------------------------------------------------------------------------------------
 // Purpose:  Using .Net Core 3.0 and Open XML SDK (by Microsoft), see if we can read an Excel file
@@ -10,20 +11,25 @@
 // ----------------------------------------------------------------------------------------------------
 // Phase 1:  Just read the Excel file cell-by-cell.  -COMPLETED
 // Phase 2:  Read only the ImageLink column.         -COMPLETED
-// Phase 3:  Download the image it references.
+// Phase 3:  Download the image it references.       -COMPLETED
 // ====================================================================================================
 
-using DocumentFormat.OpenXml.Packaging;
-using DocumentFormat.OpenXml.Spreadsheet;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+
+using Newtonsoft.Json;
+
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Spreadsheet;
 
 namespace WPG {
 
     static class ReadExcelFilePOC {
 
         public const string TestExcelFile = @"C:\WPG\Keystone Distributor Dometic Data with Images.xlsx";
+        public const string DownloadLocation = @"C:\Temp\";
+        public const string ImageList = @"C:\Temp\ImageList.txt";
 
         // ------------------------------------------------------------------------------------------
         static void Main(string[] args) {
@@ -31,24 +37,36 @@ namespace WPG {
             Console.WriteLine("Sin's PoC for Reading an Excel Spreadsheet using .Net Core 3.0 and Open XML SDK.");
             Console.WriteLine("Copyright (c) 2019.  Web Partners Group.  All rights reserved.\n\n");
 
-            // -------------------------------
-            // Call our POC function - Phase 1
-            // -------------------------------
+            // -----------------------------------------------------
+            // Call our POC function - Phase 1 - Read Cell Values
+            // -----------------------------------------------------
             //ReadExcelFileCellByCell(WPG.ReadExcelFilePOC.TestExcelFile);
 
-            // -------------------------------
-            // Call our POC function - Phase 2
-            // -------------------------------
-            List<string> URLs = new List<string>();
+            // -----------------------------------------------------
+            // Call our POC function - Phase 2 - Extract Image Links
+            // -----------------------------------------------------
+            //List<string> URLs = new List<string>();
 
-            URLs = ReadValuesFromImageLinkColumn(WPG.ReadExcelFilePOC.TestExcelFile, "ImageLink");
+            //URLs = ReadValuesFromImageLinkColumn(WPG.ReadExcelFilePOC.TestExcelFile, "ImageLink");
 
-            // Ourput each URLs on-screen
-            foreach (string URL in URLs) {
-                Console.WriteLine(URL);
-            }
+            //System.IO.File.WriteAllLines(WPG.ReadExcelFilePOC.ImageList, URLs);
 
-            Console.WriteLine("\nYour Excel File contains {0} ImageLink URLs", URLs.Count);
+            //// Ourput each URLs on-screen
+            //foreach (string URL in URLs) {
+            //    Console.WriteLine(URL);
+            //}
+
+            //Console.WriteLine("\nYour Excel File contains {0} ImageLink URLs", URLs.Count);
+
+            // -----------------------------------------------------
+            // Call our POC function - Phase 3 - Save Images
+            // -----------------------------------------------------
+            string[] arrImageList = System.IO.File.ReadAllLines(WPG.ReadExcelFilePOC.ImageList);
+
+            List<string> URLs = new List<string>(arrImageList);
+
+            DownloadImages(URLs);
+
 
             Console.ReadKey();
         }
@@ -223,6 +241,34 @@ namespace WPG {
             }
 
             return result;
+        }
+
+        static int DownloadImages(List<string> ImageList) {
+
+            int imageCount = 0;
+
+            // Initialize .Net's "internal" web browser / client
+            System.Net.WebClient wc = new System.Net.WebClient();
+
+            // Iterate through our image list collection
+            foreach (string URL in ImageList) {
+
+                string imageFileName = string.Empty;
+
+                // Step 1 - Extract just the file name portion of the Image Link (URL)
+                Uri uri = new Uri(URL);
+
+                imageFileName = System.IO.Path.GetFileName(uri.LocalPath);
+
+                // Step 2 - Download the Image
+                if (String.IsNullOrEmpty(imageFileName) == false) {
+                    Console.WriteLine("Downloading {0}...", URL);
+                    wc.DownloadFile(URL, WPG.ReadExcelFilePOC.DownloadLocation + imageFileName);
+                }
+            }
+
+            return imageCount;
+
         }
     }
 }
