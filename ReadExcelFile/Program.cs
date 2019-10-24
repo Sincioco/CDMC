@@ -1,30 +1,29 @@
 ﻿// ====================================================================================================
 //                                      Excel File Reader - Proof of Concept
 // ====================================================================================================
-// Programmed By:  Louiery R. Sincioco                                          Version:  .01 (Phase 1)
-// Programed Date:  October 23, 2019                                                      
-// ====================================================================================================
+// Programmed By:  Louiery R. Sincioco                                          Version:  .02 (Phase 2)
+// Programed Date:  October 24, 2019                                                      
+// ----------------------------------------------------------------------------------------------------
 // Purpose:  Using .Net Core 3.0 and Open XML SDK (by Microsoft), see if we can read an Excel file
 //           that Roberta has provided  which contains a ImageLink column with a URL to an image
 //           we ultimately need to download and store in a network share.
-// ====================================================================================================
-// Phase 1:  Just read the Excel file cell-by-cell.
-// Phase 2:  Read only the ImageLink column.
+// ----------------------------------------------------------------------------------------------------
+// Phase 1:  Just read the Excel file cell-by-cell.  -COMPLETED
+// Phase 2:  Read only the ImageLink column.         -COMPLETED
 // Phase 3:  Download the image it references.
+// ====================================================================================================
 
-using System;
-using System.Data;
-using System.Linq;
-using System.Collections.Generic;
-
-using Newtonsoft.Json;
-using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace WPG {
 
-    class ReadExcelFile {
+    static class ReadExcelFilePOC {
+
+        public const string TestExcelFile = @"C:\WPG\Keystone Distributor Dometic Data with Images.xlsx";
 
         // ------------------------------------------------------------------------------------------
         static void Main(string[] args) {
@@ -32,171 +31,198 @@ namespace WPG {
             Console.WriteLine("Sin's PoC for Reading an Excel Spreadsheet using .Net Core 3.0 and Open XML SDK.");
             Console.WriteLine("Copyright (c) 2019.  Web Partners Group.  All rights reserved.\n\n");
 
+            // -------------------------------
+            // Call our POC function - Phase 1
+            // -------------------------------
+            //ReadExcelFileCellByCell(WPG.ReadExcelFilePOC.TestExcelFile);
 
-            ReadExcelFileCellByCell(@"C:\WPG\Keystone Distributor Dometic Data with Images.xlsx");
+            // -------------------------------
+            // Call our POC function - Phase 2
+            // -------------------------------
+            List<string> URLs = new List<string>();
+
+            URLs = ReadValuesFromImageLinkColumn(WPG.ReadExcelFilePOC.TestExcelFile, "ImageLink");
+
+            // Ourput each URLs on-screen
+            foreach (string URL in URLs) {
+                Console.WriteLine(URL);
+            }
+
+            Console.WriteLine("\nYour Excel File contains {0} ImageLink URLs", URLs.Count);
+
             Console.ReadKey();
         }
 
         // ------------------------------------------------------------------------------------------
+        /// <summary>
+        /// Outputs the content of all the cells in an Excel file.
+        /// </summary>
+        /// <param name="ExcelFile">The full path to where the Excel file is located</param>
         static void ReadExcelFileCellByCell(string ExcelFile) {
 
-            // Given an Excel file, open it and dump its content on screen one cell at a time.
+            // Open the Excel file using Open XML SDK (a Microsoft library)
+            using SpreadsheetDocument doc = SpreadsheetDocument.Open(ExcelFile, false);
 
-            try {
+            // Reference the Workbooks
+            WorkbookPart workbookPart = doc.WorkbookPart;
 
-                // Open the Excel file using Open XML SDK (a Microsoft library)
-                using (SpreadsheetDocument doc = SpreadsheetDocument.Open(ExcelFile, false)) {
+            // Reference the first Sheet in the Workbook
+            Sheets thesheetcollection = workbookPart.Workbook.GetFirstChild<Sheets>();
 
-                    // Reference the Workbooks
-                    WorkbookPart workbookPart = doc.WorkbookPart;
+            // Loop through the Sheets collection
+            foreach (Sheet thesheet in thesheetcollection.OfType<Sheet>()) {
 
-                    // Reference the first Sheet in the Workbook
-                    Sheets thesheetcollection = workbookPart.Workbook.GetFirstChild<Sheets>();
+                // Reference a worksheet via its ID
+                Worksheet theWorksheet = ((WorksheetPart)workbookPart.GetPartById(thesheet.Id)).Worksheet;
 
-                    // Loop through the Sheets collection
-                    foreach (Sheet thesheet in thesheetcollection.OfType<Sheet>()) {
+                // Reference the data in the Sheet
+                SheetData thesheetdata = theWorksheet.GetFirstChild<SheetData>();
 
-                        // Reference a worksheet via its ID
-                        Worksheet theWorksheet = ((WorksheetPart)workbookPart.GetPartById(thesheet.Id)).Worksheet;
+                // Count the number of Rows
+                int rowCount = thesheetdata.ChildElements.Count();
 
-                        // Reference the data in the Sheet
-                        SheetData thesheetdata = theWorksheet.GetFirstChild<SheetData>();
+                // Iterate through the Rows
+                for (int row = 0; row < rowCount; row++) {
 
-                        // Count the number of Rows
-                        int rowCount = thesheetdata.ChildElements.Count();
+                    List<string> rowList = new List<string>();
 
-                        // Iterate through the Rows
-                        for (int row = 0; row < rowCount; row++) {
+                    // Count the number of Columns
+                    int columnCount = thesheetdata.ElementAt(row).ChildElements.Count();
 
-                            List<string> rowList = new List<string>();
+                    // Iterate through the Columns
+                    for (int column = 0; column < columnCount; column++) {
 
-                            // Count the number of Columns
-                            int columnCount = thesheetdata.ElementAt(row).ChildElements.Count();
+                        string currentcellvalue = string.Empty;
 
-                            // Iterate through the Columns
-                            for (int column = 0; column < columnCount; column++) {
+                        // Reference the current Cell
+                        Cell thecurrentcell = (Cell)thesheetdata.ElementAt(row).ChildElements.ElementAt(column);
 
-                                string currentcellvalue = string.Empty;
+                        // Check if the Cell has data
+                        if (thecurrentcell.DataType != null) {
 
-                                // Reference the current Cell
-                                Cell thecurrentcell = (Cell)thesheetdata.ElementAt(row).ChildElements.ElementAt(column);
+                            // If so, check if it is a Shared String (common string) like Column Headers
+                            if (thecurrentcell.DataType == CellValues.SharedString) {
 
-                                // Check if the Cell has data
-                                if (thecurrentcell.DataType != null) {
+                                int sharedStringID;
 
-                                    // If so, check if it is a Shared String (common string) like Column Headers
-                                    if (thecurrentcell.DataType == CellValues.SharedString) {
+                                // ----------------------------------------------------------------------
+                                // Internally, Excel creates a "normalized table" to store string values so they
+                                // are not stored repeatedly within a Spreadsheet.
+                                // ----------------------------------------------------------------------
 
-                                        int sharedStringID;
+                                // Let's see if we can parse a number out the Shared String ID
+                                if (Int32.TryParse(thecurrentcell.InnerText, out sharedStringID)) {
 
-                                        // Internally, Excel creates a "normalized table" to store string values so they
-                                        // are not stored repeatedly within a Spreadsheet.
+                                    // If we can, great, then let's turn that ID into its text equivalent
+                                    SharedStringItem item = workbookPart.SharedStringTablePart.SharedStringTable.Elements<SharedStringItem>().ElementAt(sharedStringID);
 
-                                        // Let's see if we can parse a number out the Shared String ID
-                                        if (Int32.TryParse(thecurrentcell.InnerText, out sharedStringID)) {
+                                    // Check if we got a value
+                                    if (item.Text != null) {
 
-                                            // If we can, great, then let's turn that ID into its text equivalent
-                                            SharedStringItem item = workbookPart.SharedStringTablePart.SharedStringTable.Elements<SharedStringItem>().ElementAt(sharedStringID);
+                                        // Are we on the first row?
+                                        if (row == 0) {
 
-                                            // Check if we got a value
-                                            if (item.Text != null) {
+                                            // If so, then we are probably just dealing with Column Headers
+                                            Console.WriteLine(thecurrentcell.CellReference + " (Text 1) = " + item.Text.Text);
 
-                                                // Are we on the first row?
-                                                if (row == 0) {
-                                                    //dtTable.Columns.Add(item.Text.Text);
+                                        } else {
 
-                                                    // If so, then we are probably just dealing with Column Headers
-                                                    Console.WriteLine(thecurrentcell.CellReference + " (Text 1) = " + item.Text.Text);
-                                                } else {
-                                                    //rowList.Add(item.Text.Text);
-
-                                                    // We are dealing with other Shared Strings that are not Column Headers
-                                                    Console.WriteLine(thecurrentcell.CellReference + " (Text 2) = " + item.Text.Text);
-                                                }
-                                            }
-                                        } else if (thecurrentcell.DataType == CellValues.String) {
-                                            //Console.WriteLine(thecurrentcell.InnerText);
-                                            Console.WriteLine(thecurrentcell.CellReference + " (InnerText A) = " + thecurrentcell.InnerText);
+                                            // We are dealing with other Shared Strings that are not Column Headers
+                                            Console.WriteLine(thecurrentcell.CellReference + " (Text 2) = " + item.Text.Text);
                                         }
-
                                     }
-                                } else {
+                                }
 
-                                    // Check to see we are not dealing with Column Headers
-                                    if (row != 0) {
-                                        //rowList.Add(thecurrentcell.InnerText);
+                            } else {
 
-                                        // If so, then simply output the value (text) contained within the Cell
-                                        Console.WriteLine(thecurrentcell.CellReference + " (InnerText B) = " + thecurrentcell.InnerText);
-                                    }
+                                // Check to see we are not dealing with Column Headers (just normal cell data)
+                                if (row != 0) {
 
+                                    // If so, then simply output the value (text) contained within the Cell
+                                    Console.WriteLine(thecurrentcell.CellReference + " (InnerText B) = " + thecurrentcell.InnerText);
                                 }
                             }
-                            // if (row != 0) {
-                            //reserved for column values
-                            //dtTable.Rows.Add(rowList.ToArray());
-                            //}
-
                         }
-
                     }
-
-                    //return JsonConvert.SerializeObject(dtTable);
-                    //return string.Empty;
                 }
-            } catch (Exception ex) {
-                Console.WriteLine(ex.Message);
-                throw;
             }
         }
 
         // ------------------------------------------------------------------------------------------
-        static void TempCode(string ExcelFile) {
+        /// <summary>
+        /// Returns the values of a specific column in an Excel file.
+        /// </summary>
+        /// <param name="ExcelFile">The full path to where the Excel file is located</param>
+        /// <param name="CellValueToLookFor">The cell value to look for</param>
+        static List<string> ReadValuesFromImageLinkColumn(string ExcelFile, string CellValueToLookFor) {
 
-            // Open the document for editing.
-            //using (SpreadsheetDocument spreadsheetDocument = SpreadsheetDocument.Open(ExcelFile, false))
-            //{
+            List<string> result = new List<string>();
 
-            //	WorkbookPart workbookPart = spreadsheetDocument.WorkbookPart;
-            //	WorksheetPart worksheetPart = workbookPart.WorksheetParts.First();
+            // Open the Excel file using Open XML SDK (a Microsoft library)
+            using SpreadsheetDocument doc = SpreadsheetDocument.Open(ExcelFile, false);
 
-            //	OpenXmlReader reader = OpenXmlReader.Create(worksheetPart);
-            //	string text;
-            //	while (reader.Read())
-            //	{
-            //		Console.WriteLine(reader.ElementType);
+            // Reference the Workbooks
+            WorkbookPart workbookPart = doc.WorkbookPart;
 
+            // Reference the first Sheet in the Workbook
+            Sheets thesheetcollection = workbookPart.Workbook.GetFirstChild<Sheets>();
 
-            //		if (reader.ElementType == typeof(CellValue))
-            //		{
-            //			text = reader.GetText();
-            //			Console.Write(text + " ");
-            //		}
-            //	}
+            // Loop through the Sheets collection
+            foreach (Sheet thesheet in thesheetcollection.OfType<Sheet>()) {
 
-            //	return string.Empty;
-            //}
+                // Reference a worksheet via its ID
+                Worksheet theWorksheet = ((WorksheetPart)workbookPart.GetPartById(thesheet.Id)).Worksheet;
 
-            //using (ExcelPackage package = new ExcelPackage(ExcelFile))
-            //{
-            //	ExcelWorksheet worksheet = package.Workbook.Worksheets[1];
-            //	int rowCount = worksheet.Dimension.Rows;
-            //	int ColCount = worksheet.Dimension.Columns;
+                // Reference the data in the Sheet
+                SheetData thesheetdata = theWorksheet.GetFirstChild<SheetData>();
 
-            //	var rawText = string.Empty;
-            //	for (int row = 1; row <= rowCount; row++)
-            //	{
-            //		for (int col = 1; col <= ColCount; col++)
-            //		{
-            //			// This is just for demo purposes
-            //			rawText += worksheet.Cells[row, col].Value.ToString() + "\t";
-            //		}
-            //		rawText += "\r\n";
-            //	}
-            //	_logger.LogInformation(rawText);
-            //}
+                // Count the number of Rows
+                int rowCount = thesheetdata.ChildElements.Count();
 
+                // Iterate through the Rows
+                for (int row = 1; row < rowCount; row++) {
 
+                    List<string> rowList = new List<string>();
+
+                    // Count the number of Columns
+                    int columnCount = thesheetdata.ElementAt(row).ChildElements.Count();
+
+                    // Iterate through the Columns
+                    for (int column = 0; column < columnCount; column++) {
+
+                        string currentcellvalue = string.Empty;
+
+                        // Reference the current Cell
+                        Cell thecurrentcell = (Cell)thesheetdata.ElementAt(row).ChildElements.ElementAt(column);
+
+                        // Are we in a cell with the Cell Value that we are looking for?
+                        if (thecurrentcell.CellValue.InnerText == CellValueToLookFor) {
+
+                            // If so, extract the Cell Formula
+                            string cellFormula = thecurrentcell.CellFormula.InnerText;
+
+                            // ----------------------------------------------------------------------
+                            // The Cell Formula is in this format:
+                            // =HYPERLINK("http://Vehiclepartimages.com/pmdt/DMT/images/96010.jpg","ImageLink")
+                            // ----------------------------------------------------------------------
+
+                            // Split it by the double quotes
+                            string[] arrFormula = cellFormula.Split("\"");
+
+                            if (arrFormula.Length > 0) {
+
+                                // The URL itself will be in the second index
+                                string URL = arrFormula[1];
+
+                                // Store the URL in our result accumulator
+                                result.Add(URL);
+                            }
+                        }
+                    }
+                }
+            }
+
+            return result;
         }
     }
 }
