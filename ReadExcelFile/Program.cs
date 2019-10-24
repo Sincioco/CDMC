@@ -1,38 +1,42 @@
 ﻿// ====================================================================================================
-//                                      Excel File Reader - Proof of Concept
+//                                    Excel File Reader - Proof of Concept
 // ====================================================================================================
 // Programmed By:  Louiery R. Sincioco                                      Version:  .04 (Iteration 4)
-// Programed Date:  October 24, 2019                                                      
+// Programed Date:  October 23, 2019                                        Web Partners Group              
 // ----------------------------------------------------------------------------------------------------
-// Purpose:  Using .Net Core 3.0 and Open XML SDK (by Microsoft), see if we can read an Excel file
-//           that Roberta has provided  which contains a ImageLink column with a URL to an image
-//           we ultimately need to download and store in a network share.
+// Purpose:  Using .Net Core 3.0 and Open XML SDK (by Microsoft), read an Excel file which contains an
+//           ImageLink column with a HYPERLINK formula that contains the URL to the product's image.
+//           Every single product image is then downloaded to a specified location.  The program also
+//           supports resume if the download process gets interrupted.
 // ----------------------------------------------------------------------------------------------------
-// Iteration 1:  Just read the Excel file cell-by-cell.             -COMPLETED
-// Iteration 2:  Read only the ImageLink column.                    -COMPLETED
-// Iteration 3:  Download the image it references.                  -COMPLETED
-// Iteration 4:  Add error recovery so we can resume download.      -COMPLETED
+// Date           JIRA        Author     Description                                                   
+// ----------------------------------------------------------------------------------------------------
+// 10/23/2019     CDMC-30     Sin        Just read the Excel file cell-by-cell for general PoC.
+// 10/23/2019     CDMC-31     Sin        Read only cells that contain the text "ImageLink"
+// 10/24/2019     CDMC-4      Sin        Download the image that the "ImageLink" URL references.
+// 10/24/2019     CDMC-33     Sin        Make program resilience and resume download if interrupted.
 // ====================================================================================================
 
 using System;
-using System.Collections.Generic;
+using System.IO;
 using System.Linq;
-
-using Newtonsoft.Json;
+using System.Collections.Generic;
 
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
-using System.IO;
 
 namespace WPG {
 
     static class ReadExcelFilePOC {
 
-        public const string TestExcelFile = @"C:\WPG\Keystone Distributor Dometic Data with Images.xlsx";
+        // ------------------------------------------------------------------------------------------
+        // Constants that may be stored in a configuration file or in a database
+        // ------------------------------------------------------------------------------------------
+        public const string TestExcelFile    = @"C:\WPG\Keystone Distributor Dometic Data with Images.xlsx";
         public const string DownloadLocation = @"C:\Temp\";
-        public const string DownloadList = @"C:\Temp\!ProductImageURLs.txt";
-        public const string ExceptionList = @"C:\Temp\!ProductImageURLs_FailedDownload.txt";
-        public const string DownloadTempFileExtension = ".wpgdownload.tmp";
+        public const string DownloadList     = DownloadLocation + "!ProductImageURLs.txt";
+        public const string ExceptionList    = DownloadLocation + "!ProductImageURLs_FailedDownload.txt";
+        public const string TempExtension    = ".wpgdownload.tmp";
 
         // ------------------------------------------------------------------------------------------
         static void Main(string[] args) {
@@ -62,28 +66,28 @@ namespace WPG {
             }
 
             Console.WriteLine("\nYour Excel File contained {0} Product Image URLs\n", URLs.Count);
-
             Console.WriteLine("Press a key to continue...");
             Console.ReadKey();
 
             // -----------------------------------------------------
             // Call our POC function - Iteration 3 & 4 - Save Images - Allow for Resume/Recovery
             // -----------------------------------------------------
-            string[] arrImageList = System.IO.File.ReadAllLines(WPG.ReadExcelFilePOC.DownloadList);
+
+            // For Debugging - read in a list of URLs to download (the output of Iteration 2)
+            //string[] arrImageList = System.IO.File.ReadAllLines(WPG.ReadExcelFilePOC.DownloadList);
             
-            List<string> FailedDownloadList = null;
-            int SuccessfullDownloadCount = 0;
+            List<string> failedDownloadList = null;
+            int SuccessfulDownloadCount = 0;
 
-            SuccessfullDownloadCount = DownloadImages(URLs, out FailedDownloadList);
+            SuccessfulDownloadCount = DownloadImages(URLs, out failedDownloadList);
 
-            if (FailedDownloadList != null && FailedDownloadList.Count > 0) {
+            if (failedDownloadList != null && failedDownloadList.Count > 0) {
 
                 // Save the list of files that failed to download
-                System.IO.File.WriteAllLines(WPG.ReadExcelFilePOC.ExceptionList, FailedDownloadList);
+                System.IO.File.WriteAllLines(WPG.ReadExcelFilePOC.ExceptionList, failedDownloadList);
             }
 
-            Console.WriteLine("\nThere were {0} Product Image URLs and {1} were successfully downloaded.\n", URLs.Count, SuccessfullDownloadCount);
-
+            Console.WriteLine("\nThere were {0} Product Image URLs and {1} were successfully downloaded.\n", URLs.Count, SuccessfulDownloadCount);
             Console.WriteLine("Press a key to continue...");
             Console.ReadKey();
 
@@ -97,25 +101,25 @@ namespace WPG {
         static void ReadExcelFileCellByCell(string filename) {
 
             // Open the Excel file using Open XML SDK (a Microsoft library)
-            using SpreadsheetDocument doc = SpreadsheetDocument.Open(filename, false);
+            using SpreadsheetDocument document = SpreadsheetDocument.Open(filename, false);
 
-            // Reference the Workbooks
-            WorkbookPart workbookPart = doc.WorkbookPart;
+            // Reference the Workbook
+            WorkbookPart workbookPart = document.WorkbookPart;
 
-            // Reference the first Sheet in the Workbook
-            Sheets thesheetcollection = workbookPart.Workbook.GetFirstChild<Sheets>();
+            // Reference the Sheets collection
+            Sheets sheetCollection = workbookPart.Workbook.GetFirstChild<Sheets>();
 
             // Loop through the Sheets collection
-            foreach (Sheet thesheet in thesheetcollection.OfType<Sheet>()) {
+            foreach (Sheet sheet in sheetCollection.OfType<Sheet>()) {
 
                 // Reference a worksheet via its ID
-                Worksheet theWorksheet = ((WorksheetPart)workbookPart.GetPartById(thesheet.Id)).Worksheet;
+                Worksheet worksheet = ((WorksheetPart)workbookPart.GetPartById(sheet.Id)).Worksheet;
 
                 // Reference the data in the Sheet
-                SheetData thesheetdata = theWorksheet.GetFirstChild<SheetData>();
+                SheetData sheetData = worksheet.GetFirstChild<SheetData>();
 
                 // Count the number of Rows
-                int rowCount = thesheetdata.ChildElements.Count();
+                int rowCount = sheetData.ChildElements.Count();
 
                 // Iterate through the Rows
                 for (int row = 0; row < rowCount; row++) {
@@ -123,31 +127,32 @@ namespace WPG {
                     List<string> rowList = new List<string>();
 
                     // Count the number of Columns
-                    int columnCount = thesheetdata.ElementAt(row).ChildElements.Count();
+                    int columnCount = sheetData.ElementAt(row).ChildElements.Count();
 
                     // Iterate through the Columns
                     for (int column = 0; column < columnCount; column++) {
 
-                        string currentcellvalue = string.Empty;
+                        string currentCellValue = string.Empty;
 
                         // Reference the current Cell
-                        Cell thecurrentcell = (Cell)thesheetdata.ElementAt(row).ChildElements.ElementAt(column);
+                        Cell currentCell = (Cell)sheetData.ElementAt(row).ChildElements.ElementAt(column);
 
                         // Check if the Cell has data
-                        if (thecurrentcell.DataType != null) {
+                        if (currentCell.DataType != null) {
 
                             // If so, check if it is a Shared String (common string) like Column Headers
-                            if (thecurrentcell.DataType == CellValues.SharedString) {
+                            if (currentCell.DataType == CellValues.SharedString) {
 
                                 int sharedStringID;
 
                                 // ----------------------------------------------------------------------
                                 // Internally, Excel creates a "normalized table" to store string values so they
-                                // are not stored repeatedly within a Spreadsheet.
+                                // are not stored repeatedly within a Spreadsheet.  So you have to use the
+                                // Shared String ID to get the text equivalent.
                                 // ----------------------------------------------------------------------
 
                                 // Let's see if we can parse a number out the Shared String ID
-                                if (Int32.TryParse(thecurrentcell.InnerText, out sharedStringID)) {
+                                if (Int32.TryParse(currentCell.InnerText, out sharedStringID)) {
 
                                     // If we can, great, then let's turn that ID into its text equivalent
                                     SharedStringItem item = workbookPart.SharedStringTablePart.SharedStringTable.Elements<SharedStringItem>().ElementAt(sharedStringID);
@@ -159,12 +164,12 @@ namespace WPG {
                                         if (row == 0) {
 
                                             // If so, then we are probably just dealing with Column Headers
-                                            Console.WriteLine(thecurrentcell.CellReference + " (Text 1) = " + item.Text.Text);
+                                            Console.WriteLine(currentCell.CellReference + " (Text 1) = " + item.Text.Text);
 
                                         } else {
 
                                             // We are dealing with other Shared Strings that are not Column Headers
-                                            Console.WriteLine(thecurrentcell.CellReference + " (Text 2) = " + item.Text.Text);
+                                            Console.WriteLine(currentCell.CellReference + " (Text 2) = " + item.Text.Text);
                                         }
                                     }
                                 }
@@ -175,7 +180,7 @@ namespace WPG {
                                 if (row != 0) {
 
                                     // If so, then simply output the value (text) contained within the Cell
-                                    Console.WriteLine(thecurrentcell.CellReference + " (InnerText B) = " + thecurrentcell.InnerText);
+                                    Console.WriteLine(currentCell.CellReference + " (InnerText B) = " + currentCell.InnerText);
                                 }
                             }
                         }
@@ -186,34 +191,34 @@ namespace WPG {
 
         // ------------------------------------------------------------------------------------------
         /// <summary>
-        /// Returns the values of a specific column in an Excel file.
+        /// Returns the values of a specific cell value (for example 'ImageLink') in an Excel file.
         /// </summary>
         /// <param name="filename">The full path to where the Excel file is located</param>
-        /// <param name="CellValueToLookFor">The cell value to look for (like 'ImageLink')</param>
-        static List<string> ExtractProductImageURLs(string filename, string CellValueToLookFor) {
+        /// <param name="cellValueToLookFor">The cell value to look for (like 'ImageLink')</param>
+        static List<string> ExtractProductImageURLs(string filename, string cellValueToLookFor) {
 
             List<string> result = new List<string>();
 
             // Open the Excel file using Open XML SDK (a Microsoft library)
-            using SpreadsheetDocument doc = SpreadsheetDocument.Open(filename, false);
+            using SpreadsheetDocument spreadhSheet = SpreadsheetDocument.Open(filename, false);
 
             // Reference the Workbooks
-            WorkbookPart workbookPart = doc.WorkbookPart;
+            WorkbookPart workbookPart = spreadhSheet.WorkbookPart;
 
-            // Reference the first Sheet in the Workbook
-            Sheets thesheetcollection = workbookPart.Workbook.GetFirstChild<Sheets>();
+            // Reference the Sheets collection
+            Sheets sheetCollection = workbookPart.Workbook.GetFirstChild<Sheets>();
 
             // Loop through the Sheets collection
-            foreach (Sheet thesheet in thesheetcollection.OfType<Sheet>()) {
+            foreach (Sheet sheet in sheetCollection.OfType<Sheet>()) {
 
                 // Reference a worksheet via its ID
-                Worksheet theWorksheet = ((WorksheetPart)workbookPart.GetPartById(thesheet.Id)).Worksheet;
+                Worksheet workSheet = ((WorksheetPart)workbookPart.GetPartById(sheet.Id)).Worksheet;
 
                 // Reference the data in the Sheet
-                SheetData thesheetdata = theWorksheet.GetFirstChild<SheetData>();
+                SheetData sheetData = workSheet.GetFirstChild<SheetData>();
 
                 // Count the number of Rows
-                int rowCount = thesheetdata.ChildElements.Count();
+                int rowCount = sheetData.ChildElements.Count();
 
                 // Iterate through the Rows
                 for (int row = 1; row < rowCount; row++) {
@@ -221,21 +226,21 @@ namespace WPG {
                     List<string> rowList = new List<string>();
 
                     // Count the number of Columns
-                    int columnCount = thesheetdata.ElementAt(row).ChildElements.Count();
+                    int columnCount = sheetData.ElementAt(row).ChildElements.Count();
 
                     // Iterate through the Columns
                     for (int column = 0; column < columnCount; column++) {
 
-                        string currentcellvalue = string.Empty;
+                        string currentCellValue = string.Empty;
 
                         // Reference the current Cell
-                        Cell thecurrentcell = (Cell)thesheetdata.ElementAt(row).ChildElements.ElementAt(column);
+                        Cell currentCell = (Cell)sheetData.ElementAt(row).ChildElements.ElementAt(column);
 
                         // Are we in a cell with the Cell Value that we are looking for?
-                        if (thecurrentcell.CellValue.InnerText == CellValueToLookFor) {
+                        if (currentCell.CellValue.InnerText == cellValueToLookFor) {
 
                             // If so, extract the Cell Formula
-                            string cellFormula = thecurrentcell.CellFormula.InnerText;
+                            string cellFormula = currentCell.CellFormula.InnerText;
 
                             // ----------------------------------------------------------------------
                             // The Cell Formula is in this format:
@@ -266,19 +271,20 @@ namespace WPG {
         /// Given a list of URLs for product images, download them locally.  This operation can be
         /// stopped and resumed at any time in cases when we have Internet connection problems.
         /// </summary>
-        /// <param name="ImageList">A list of URLs</param>
-        /// <param name="FailedDownloadList">An output list of URL (images) we failed to download</param>
+        /// <param name="URLs">A list of URLs</param>
+        /// <param name="exceptionList">An output list of URL that failed to download</param>
         /// <returns>Returns the number of images successfully downloaded</returns>
-        static int DownloadImages(List<string> ImageList, out List<string> FailedDownloadList) {
+        static int DownloadImages(List<string> URLs, out List<string> exceptionList) {
 
+            // Initialize variables
             int downloadSuccessCount = 0;
-            FailedDownloadList = new List<string>();
+            exceptionList = new List<string>();
 
             // Initialize .Net's "internal" web browser / client
             using System.Net.WebClient wc = new System.Net.WebClient();
 
             // Iterate through our image list collection
-            foreach (string URL in ImageList) {
+            foreach (string URL in URLs) {
 
                 string imageFileName = string.Empty;
                 string imageFileNameTemp = string.Empty;
@@ -294,7 +300,7 @@ namespace WPG {
 
                     // Assign our real and temporary file names
                     imageFileName = WPG.ReadExcelFilePOC.DownloadLocation + imageFileName;
-                    imageFileNameTemp = imageFileName + WPG.ReadExcelFilePOC.DownloadTempFileExtension;
+                    imageFileNameTemp = imageFileName + WPG.ReadExcelFilePOC.TempExtension;
 
                     try {
 
@@ -316,14 +322,13 @@ namespace WPG {
                         Console.WriteLine("\tFailed to download {0}", URL);
 
                         // Remember Image URLs that failed to download
-                        FailedDownloadList.Add(URL);
+                        exceptionList.Add(URL);
                     }
                     
                 }
             }
 
             return downloadSuccessCount;
-
         }
     }
 }
