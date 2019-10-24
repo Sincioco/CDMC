@@ -1,17 +1,17 @@
-﻿
-// ====================================================================================================
+﻿// ====================================================================================================
 //                                      Excel File Reader - Proof of Concept
 // ====================================================================================================
-// Programmed By:  Louiery R. Sincioco                                          Version:  .03 (Phase 3)
+// Programmed By:  Louiery R. Sincioco                                      Version:  .04 (Iteration 4)
 // Programed Date:  October 24, 2019                                                      
 // ----------------------------------------------------------------------------------------------------
 // Purpose:  Using .Net Core 3.0 and Open XML SDK (by Microsoft), see if we can read an Excel file
 //           that Roberta has provided  which contains a ImageLink column with a URL to an image
 //           we ultimately need to download and store in a network share.
 // ----------------------------------------------------------------------------------------------------
-// Phase 1:  Just read the Excel file cell-by-cell.  -COMPLETED
-// Phase 2:  Read only the ImageLink column.         -COMPLETED
-// Phase 3:  Download the image it references.       -COMPLETED
+// Iteration 1:  Just read the Excel file cell-by-cell.             -COMPLETED
+// Iteration 2:  Read only the ImageLink column.                    -COMPLETED
+// Iteration 3:  Download the image it references.                  -COMPLETED
+// Iteration 4:  Add error recovery so we can resume download.      -COMPLETED
 // ====================================================================================================
 
 using System;
@@ -22,6 +22,7 @@ using Newtonsoft.Json;
 
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
+using System.IO;
 
 namespace WPG {
 
@@ -29,7 +30,9 @@ namespace WPG {
 
         public const string TestExcelFile = @"C:\WPG\Keystone Distributor Dometic Data with Images.xlsx";
         public const string DownloadLocation = @"C:\Temp\";
-        public const string ImageList = @"C:\Temp\ImageList.txt";
+        public const string DownloadList = @"C:\Temp\!ProductImageURLs.txt";
+        public const string ExceptionList = @"C:\Temp\!ProductImageURLs_FailedDownload.txt";
+        public const string DownloadTempFileExtension = ".wpgdownload.tmp";
 
         // ------------------------------------------------------------------------------------------
         static void Main(string[] args) {
@@ -38,48 +41,63 @@ namespace WPG {
             Console.WriteLine("Copyright (c) 2019.  Web Partners Group.  All rights reserved.\n\n");
 
             // -----------------------------------------------------
-            // Call our POC function - Phase 1 - Read Cell Values
+            // Call our POC function - Iteration 1 - Read Cell Values
             // -----------------------------------------------------
             //ReadExcelFileCellByCell(WPG.ReadExcelFilePOC.TestExcelFile);
 
             // -----------------------------------------------------
-            // Call our POC function - Phase 2 - Extract Image Links
+            // Call our POC function - Iteration 2 - Extract Image Links
             // -----------------------------------------------------
-            //List<string> URLs = new List<string>();
+            List<string> URLs = new List<string>();
 
-            //URLs = ReadValuesFromImageLinkColumn(WPG.ReadExcelFilePOC.TestExcelFile, "ImageLink");
+            // Extract Product Image URLs
+            URLs = ExtractProductImageURLs(WPG.ReadExcelFilePOC.TestExcelFile, "ImageLink");
 
-            //System.IO.File.WriteAllLines(WPG.ReadExcelFilePOC.ImageList, URLs);
+            // Store the list into a file
+            File.WriteAllLines(WPG.ReadExcelFilePOC.DownloadList, URLs);
 
-            //// Ourput each URLs on-screen
-            //foreach (string URL in URLs) {
-            //    Console.WriteLine(URL);
-            //}
+            // Ourput each Product URL on-screen
+            foreach (string URL in URLs) {
+                Console.WriteLine(URL);
+            }
 
-            //Console.WriteLine("\nYour Excel File contains {0} ImageLink URLs", URLs.Count);
+            Console.WriteLine("\nYour Excel File contained {0} Product Image URLs\n", URLs.Count);
 
-            // -----------------------------------------------------
-            // Call our POC function - Phase 3 - Save Images
-            // -----------------------------------------------------
-            string[] arrImageList = System.IO.File.ReadAllLines(WPG.ReadExcelFilePOC.ImageList);
-
-            List<string> URLs = new List<string>(arrImageList);
-
-            DownloadImages(URLs);
-
-
+            Console.WriteLine("Press a key to continue...");
             Console.ReadKey();
+
+            // -----------------------------------------------------
+            // Call our POC function - Iteration 3 & 4 - Save Images - Allow for Resume/Recovery
+            // -----------------------------------------------------
+            string[] arrImageList = System.IO.File.ReadAllLines(WPG.ReadExcelFilePOC.DownloadList);
+            
+            List<string> FailedDownloadList = null;
+            int SuccessfullDownloadCount = 0;
+
+            SuccessfullDownloadCount = DownloadImages(URLs, out FailedDownloadList);
+
+            if (FailedDownloadList != null && FailedDownloadList.Count > 0) {
+
+                // Save the list of files that failed to download
+                System.IO.File.WriteAllLines(WPG.ReadExcelFilePOC.ExceptionList, FailedDownloadList);
+            }
+
+            Console.WriteLine("\nThere were {0} Product Image URLs and {1} were successfully downloaded.\n", URLs.Count, SuccessfullDownloadCount);
+
+            Console.WriteLine("Press a key to continue...");
+            Console.ReadKey();
+
         }
 
         // ------------------------------------------------------------------------------------------
         /// <summary>
-        /// Outputs the content of all the cells in an Excel file.
+        /// Outputs the content of all the cells in an Excel file on-screen.
         /// </summary>
-        /// <param name="ExcelFile">The full path to where the Excel file is located</param>
-        static void ReadExcelFileCellByCell(string ExcelFile) {
+        /// <param name="filename">The full path to where the Excel file is located</param>
+        static void ReadExcelFileCellByCell(string filename) {
 
             // Open the Excel file using Open XML SDK (a Microsoft library)
-            using SpreadsheetDocument doc = SpreadsheetDocument.Open(ExcelFile, false);
+            using SpreadsheetDocument doc = SpreadsheetDocument.Open(filename, false);
 
             // Reference the Workbooks
             WorkbookPart workbookPart = doc.WorkbookPart;
@@ -170,14 +188,14 @@ namespace WPG {
         /// <summary>
         /// Returns the values of a specific column in an Excel file.
         /// </summary>
-        /// <param name="ExcelFile">The full path to where the Excel file is located</param>
-        /// <param name="CellValueToLookFor">The cell value to look for</param>
-        static List<string> ReadValuesFromImageLinkColumn(string ExcelFile, string CellValueToLookFor) {
+        /// <param name="filename">The full path to where the Excel file is located</param>
+        /// <param name="CellValueToLookFor">The cell value to look for (like 'ImageLink')</param>
+        static List<string> ExtractProductImageURLs(string filename, string CellValueToLookFor) {
 
             List<string> result = new List<string>();
 
             // Open the Excel file using Open XML SDK (a Microsoft library)
-            using SpreadsheetDocument doc = SpreadsheetDocument.Open(ExcelFile, false);
+            using SpreadsheetDocument doc = SpreadsheetDocument.Open(filename, false);
 
             // Reference the Workbooks
             WorkbookPart workbookPart = doc.WorkbookPart;
@@ -243,31 +261,68 @@ namespace WPG {
             return result;
         }
 
-        static int DownloadImages(List<string> ImageList) {
+        // ------------------------------------------------------------------------------------------
+        /// <summary>
+        /// Given a list of URLs for product images, download them locally.  This operation can be
+        /// stopped and resumed at any time in cases when we have Internet connection problems.
+        /// </summary>
+        /// <param name="ImageList">A list of URLs</param>
+        /// <param name="FailedDownloadList">An output list of URL (images) we failed to download</param>
+        /// <returns>Returns the number of images successfully downloaded</returns>
+        static int DownloadImages(List<string> ImageList, out List<string> FailedDownloadList) {
 
-            int imageCount = 0;
+            int downloadSuccessCount = 0;
+            FailedDownloadList = new List<string>();
 
             // Initialize .Net's "internal" web browser / client
-            System.Net.WebClient wc = new System.Net.WebClient();
+            using System.Net.WebClient wc = new System.Net.WebClient();
 
             // Iterate through our image list collection
             foreach (string URL in ImageList) {
 
                 string imageFileName = string.Empty;
+                string imageFileNameTemp = string.Empty;
 
                 // Step 1 - Extract just the file name portion of the Image Link (URL)
                 Uri uri = new Uri(URL);
-
-                imageFileName = System.IO.Path.GetFileName(uri.LocalPath);
+                imageFileName = Path.GetFileName(uri.LocalPath);
 
                 // Step 2 - Download the Image
                 if (String.IsNullOrEmpty(imageFileName) == false) {
-                    Console.WriteLine("Downloading {0}...", URL);
-                    wc.DownloadFile(URL, WPG.ReadExcelFilePOC.DownloadLocation + imageFileName);
+                    
+                    Console.WriteLine("Downloading {0}", URL);
+
+                    // Assign our real and temporary file names
+                    imageFileName = WPG.ReadExcelFilePOC.DownloadLocation + imageFileName;
+                    imageFileNameTemp = imageFileName + WPG.ReadExcelFilePOC.DownloadTempFileExtension;
+
+                    try {
+
+                        // Check if we have already downloaded the file previously
+                        if (File.Exists(imageFileName) == false) {
+
+                            // If not, download the image using the temporary file name
+                            wc.DownloadFile(URL, imageFileNameTemp);
+
+                            // Rename it to the real file name after download
+                            System.IO.File.Move(imageFileNameTemp, imageFileName);
+                        }
+
+                        // Increment our download success count
+                        downloadSuccessCount++;
+
+                    } catch (Exception) {
+
+                        Console.WriteLine("\tFailed to download {0}", URL);
+
+                        // Remember Image URLs that failed to download
+                        FailedDownloadList.Add(URL);
+                    }
+                    
                 }
             }
 
-            return imageCount;
+            return downloadSuccessCount;
 
         }
     }
